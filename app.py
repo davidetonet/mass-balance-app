@@ -1,97 +1,102 @@
 import streamlit as st
 import pandas as pd
 
-# Conversion constants
-USG_TO_KG = 2.84
-CONSUMPTION_USG_PER_HOUR = 6
-TAXI_FUEL_USG = 1.5
+# Costanti
+USG_TO_KG = 2.84  # Conversione carburante
+FUEL_BURN_RATE = 6  # USG/h
+FUEL_ARM = 1.067  # Braccio del carburante
 
-# Function to calculate fuel requirements
+# Funzione per calcolare il carburante
 def calculate_fuel(flight_time):
-    trip_time = flight_time - 15  # Removing 15 min taxi time
-    contingency_time = round(0.05 * trip_time)
+    taxi_time = 15
+    trip_time = flight_time - taxi_time
+    contingency_time = round(trip_time * 0.05)
     alternate_time = 30
     reserve_time = 30
+    extra_time = max(0, (120 - (trip_time + taxi_time + contingency_time + alternate_time + reserve_time)))
+    total_time = taxi_time + trip_time + contingency_time + alternate_time + reserve_time + extra_time
     
-    total_minutes = sum([trip_time, contingency_time, alternate_time, reserve_time])
-    extra_time_2h = max(0, 120 - total_minutes)
-    extra_time_3h = max(0, 180 - total_minutes)
-    extra_time_4h = max(0, 240 - total_minutes)
-    
-    fuel_times = [15, trip_time, contingency_time, alternate_time, reserve_time, extra_time_2h, extra_time_3h, extra_time_4h]
-    fuel_usg = [round((t / 60) * CONSUMPTION_USG_PER_HOUR, 1) for t in fuel_times]
-    total_fuel_kg = [round(f * USG_TO_KG, 1) for f in fuel_usg[-3:]]
+    # Conversione in USG
+    taxi_usg = round(taxi_time / 60 * FUEL_BURN_RATE, 1)
+    trip_usg = round(trip_time / 60 * FUEL_BURN_RATE, 1)
+    contingency_usg = round(contingency_time / 60 * FUEL_BURN_RATE, 1)
+    alternate_usg = round(alternate_time / 60 * FUEL_BURN_RATE, 1)
+    reserve_usg = round(reserve_time / 60 * FUEL_BURN_RATE, 1)
+    extra_usg = round(extra_time / 60 * FUEL_BURN_RATE, 1)
+    total_usg = taxi_usg + trip_usg + contingency_usg + alternate_usg + reserve_usg + extra_usg
+    total_kg = round(total_usg * USG_TO_KG)
     
     return pd.DataFrame({
-        "Fuel Type": ["Taxi", "Trip", "Contingency", "Alternate", "Reserve", "Total (2h)", "Total (3h)", "Total (4h)"],
-        "Minutes": fuel_times,
-        "US Gal": fuel_usg,
-        "Total Fuel (kg)": total_fuel_kg + ["", "", ""]
-    })
+        "Time (min)": [taxi_time, trip_time, contingency_time, alternate_time, reserve_time, extra_time, total_time],
+        "USG": [taxi_usg, trip_usg, contingency_usg, alternate_usg, reserve_usg, extra_usg, total_usg],
+        "Kg": ["-", "-", "-", "-", "-", "-", total_kg]
+    }, index=["Taxi", "Trip", "Contingency", "Alternate", "Reserve", "Extra", "Total"])
 
-# Function to calculate mass & balance
+# Funzione per Mass & Balance
 def calculate_mass_balance(total_fuel_kg):
-    fuel_weight = total_fuel_kg
-    fuel_arm = 1.067
-    fuel_moment = round(fuel_weight * fuel_arm, 2)
+    basic_empty_weight = 540
+    basic_moment = 540 * 0.78
+    fuel_moment = total_fuel_kg * FUEL_ARM
+    taxi_fuel_kg = round(1.5 * USG_TO_KG, 2)
+    taxi_moment = taxi_fuel_kg * FUEL_ARM
+    trip_fuel_kg = round((total_fuel_kg - taxi_fuel_kg) * 0.85, 2)
+    trip_moment = trip_fuel_kg * FUEL_ARM
     
-    taxi_weight = round(TAXI_FUEL_USG * USG_TO_KG, 1)
-    taxi_moment = round(taxi_weight * fuel_arm, 2)
+    ramp_weight = basic_empty_weight + total_fuel_kg
+    ramp_moment = basic_moment + fuel_moment
     
-    trip_weight = round((flight_time / 60) * CONSUMPTION_USG_PER_HOUR * USG_TO_KG, 1)
-    trip_moment = round(trip_weight * fuel_arm, 2)
+    takeoff_weight = ramp_weight - taxi_fuel_kg
+    takeoff_moment = ramp_moment - taxi_moment
     
-    takeoff_weight = 540 + 70 + 70 + fuel_weight - taxi_weight
-    landing_weight = takeoff_weight - trip_weight
-    
-    return pd.DataFrame({
-        "Stage": ["Fuel", "Taxi Run", "Trip Fuel", "Ramp", "Takeoff", "Landing"],
-        "Weight (kg)": [fuel_weight, taxi_weight, trip_weight, takeoff_weight, takeoff_weight, landing_weight],
-        "Arm (m)": [fuel_arm, fuel_arm, fuel_arm, 0.78, 0.78, 0.78],
-        "Moment": [fuel_moment, taxi_moment, trip_moment, round(takeoff_weight * 0.78, 2), round(takeoff_weight * 0.78, 2), round(landing_weight * 0.78, 2)]
-    })
-
-# Function to calculate performance
-def calculate_performance(qnh, oat):
-    elevation = 44
-    pa = round((1013 - qnh) * 30 + elevation)
-    isa_dev = oat - 15
-    da = round(pa + (isa_dev * 120))
+    landing_weight = takeoff_weight - trip_fuel_kg
+    landing_moment = takeoff_moment - trip_moment
     
     return pd.DataFrame({
-        "Parameter": ["Elevation", "QNH", "PA", "OAT", "ISA Dev", "DA"],
-        "Value": [elevation, qnh, pa, oat, isa_dev, da]
+        "Weight (kg)": [total_fuel_kg, ramp_weight, takeoff_weight, landing_weight],
+        "Arm (m)": [FUEL_ARM, "-", "-", "-"],
+        "Moment": [fuel_moment, ramp_moment, takeoff_moment, landing_moment]
+    }, index=["Fuel", "Ramp", "Takeoff", "Landing"])
+
+# Funzione per Performance
+def calculate_performance(qnh, oat, elevation):
+    PA = (1013 - qnh) * 27 + elevation
+    ISA_Dev = oat - 15
+    DA = PA + (ISA_Dev * 120)
+    return pd.DataFrame({
+        "Elevation": [elevation],
+        "QNH": [qnh],
+        "PA": [PA],
+        "OAT": [oat],
+        "ISA Dev": [ISA_Dev],
+        "DA": [DA]
     })
 
-# Streamlit UI
-st.title("Cessna 152 Flight Planner")
+# UI
+st.title("Cessna 152 - Mass & Balance & Performance")
 
-# FUEL SECTION
-st.header("Fuel Calculation")
-flight_time = st.number_input("Enter Flight Time (min):", min_value=15, value=60, step=1)
+# Input
+flight_time = st.number_input("Flight Time (min)", min_value=30, max_value=240, step=5)
+qnh_lipu = st.number_input("QNH LIPU")
+oat_lipu = st.number_input("OAT LIPU")
+qnh_liph = st.number_input("QNH LIPH")
+oat_liph = st.number_input("OAT LIPH")
+
+# Calcoli
 fuel_df = calculate_fuel(flight_time)
+total_fuel_kg = int(fuel_df.loc["Total", "Kg"])
+mass_balance_df = calculate_mass_balance(total_fuel_kg)
+performance_lipu_df = calculate_performance(qnh_lipu, oat_lipu, 44)
+performance_liph_df = calculate_performance(qnh_liph, oat_liph, 59)
+
+# Output
+st.subheader("Fuel Calculation")
 st.table(fuel_df)
 
-total_fuel_kg = float(fuel_df.iloc[5, 3])  # Get 2h total fuel in kg
-
-# MASS & BALANCE SECTION
-st.header("Mass & Balance")
-mass_balance_df = calculate_mass_balance(total_fuel_kg)
+st.subheader("Mass & Balance")
 st.table(mass_balance_df)
 
-# PERFORMANCE SECTION
-st.header("Performance - LIPU")
-qnh_lipu = st.number_input("Enter QNH for LIPU:", min_value=900, max_value=1100, value=1013)
-oat_lipu = st.number_input("Enter OAT for LIPU:", min_value=-20, max_value=40, value=15)
-performance_lipu_df = calculate_performance(qnh_lipu, oat_lipu)
+st.subheader("Performance - LIPU")
 st.table(performance_lipu_df)
 
-st.header("Performance - LIPH")
-qnh_liph = st.number_input("Enter QNH for LIPH:", min_value=900, max_value=1100, value=1013)
-oat_liph = st.number_input("Enter OAT for LIPH:", min_value=-20, max_value=40, value=15)
-performance_liph_df = calculate_performance(qnh_liph, oat_liph)
+st.subheader("Performance - LIPH")
 st.table(performance_liph_df)
-
-# DISTANCE CALCULATION PLACEHOLDER
-st.header("Distance Calculation - LIPU & LIPH")
-st.write("[Dati Distance Calculation verranno aggiunti] 🔧")
