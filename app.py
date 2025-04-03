@@ -20,7 +20,7 @@ def calculate_fuel(flight_time):
     contingency_time = trip_time * 0.05
     reserve_time = 30
     alternate_time = 30
-    total_time = taxi_fuel + trip_time + contingency_time + reserve_time + alternate_time
+    total_time = 15 + trip_time + contingency_time + reserve_time + alternate_time
 
     fuel_data = {
         "Phase": ["Taxi", "Trip", "Contingency", "Reserve", "Alternate", "Total"],
