@@ -1,78 +1,51 @@
 import streamlit as st
 import numpy as np
 
-def interpolate(value, x_points, y_points):
-    return np.interp(value, x_points, y_points)
+def calculate_pressure_altitude(qnh, elevation):
+    return (1013 - qnh) * 30 + elevation
 
-def convert_feet_to_meters(feet):
-    return feet * 0.3048
+def calculate_isa_dev(oat):
+    return oat - 15
 
-def calculate_mass_balance(total_flight_time):
-    taxi_time = 15
-    trip_time = total_flight_time - taxi_time
-    contingency_time = round(trip_time * 0.05)
-    alternate_time = 30
-    reserve_time = 30
-    extra_time_2h = max(0, 120 - total_flight_time)
-    extra_time_3h = max(0, 180 - total_flight_time)
-    extra_time_4h = max(0, 240 - total_flight_time)
-    
-    fuel_times = [taxi_time, trip_time, contingency_time, alternate_time, reserve_time]
-    fuel_times += [extra_time_2h, extra_time_3h, extra_time_4h]
-    fuel_gal = [round(t / 60 * 6, 2) for t in fuel_times]
-    fuel_kg = [round(g * 2.84, 2) for g in fuel_gal]
-    
-    return fuel_times, fuel_gal, fuel_kg
+def interpolate(value, lower_bound, upper_bound, lower_result, upper_result):
+    return lower_result + (value - lower_bound) * (upper_result - lower_result) / (upper_bound - lower_bound)
 
-def calculate_performance(qnh, oat, airport):
-    elevation = 44 if airport == "LIPU" else 59
-    pressure_altitude = elevation + (1013 - qnh) * 30
-    isa_dev = oat - (15 - (elevation / 1000 * 2))
-    density_altitude = pressure_altitude + (120 * isa_dev)
+def calculate_takeoff_landing(oat, pa, table):
+    temp_keys = sorted(table.keys())
+    pa_keys = sorted(table[temp_keys[0]].keys())
     
-    return elevation, pressure_altitude, isa_dev, density_altitude
+    lower_temp = max(t for t in temp_keys if t <= oat)
+    upper_temp = min(t for t in temp_keys if t >= oat)
+    
+    lower_pa = max(p for p in pa_keys if p <= pa)
+    upper_pa = min(p for p in pa_keys if p >= pa)
+    
+    lower_temp_lower_pa = table[lower_temp][lower_pa]
+    lower_temp_upper_pa = table[lower_temp][upper_pa]
+    upper_temp_lower_pa = table[upper_temp][lower_pa]
+    upper_temp_upper_pa = table[upper_temp][upper_pa]
+    
+    interp_pa_low = interpolate(pa, lower_pa, upper_pa, lower_temp_lower_pa, lower_temp_upper_pa)
+    interp_pa_high = interpolate(pa, lower_pa, upper_pa, upper_temp_lower_pa, upper_temp_upper_pa)
+    
+    return interpolate(oat, lower_temp, upper_temp, interp_pa_low, interp_pa_high)
 
-def main():
-    st.title("Cessna 152 Performance Calculator")
-    
-    total_flight_time = st.number_input("Total Flight Time (min)", min_value=0, max_value=240, step=1)
-    fuel_times, fuel_gal, fuel_kg = calculate_mass_balance(total_flight_time)
-    
-    st.header("Fuel Calculation")
-    categories = ["Taxi", "Trip", "Contingency", "Alternate", "Reserve", "Extra (2h)", "Extra (3h)", "Extra (4h)"]
-    for i, cat in enumerate(categories):
-        st.write(f"{cat}: {fuel_times[i]} min, {fuel_gal[i]} USG, {fuel_kg[i]} kg")
-    
-    st.header("Mass & Balance")
-    st.write("Calculations for weight, arm, and moment based on fuel weight.")
-    
-    st.header("Performance Calculation")
-    qnh_lipu = st.number_input("QNH (LIPU)", value=1013)
-    oat_lipu = st.number_input("OAT (LIPU)", value=15)
-    elevation_lipu, pa_lipu, isa_dev_lipu, da_lipu = calculate_performance(qnh_lipu, oat_lipu, "LIPU")
-    
-    st.write(f"Elevation: {elevation_lipu} ft, PA: {pa_lipu} ft, ISA Dev: {isa_dev_lipu}, DA: {da_lipu} ft")
-    
-    qnh_liph = st.number_input("QNH (LIPH)", value=1013)
-    oat_liph = st.number_input("OAT (LIPH)", value=15)
-    elevation_liph, pa_liph, isa_dev_liph, da_liph = calculate_performance(qnh_liph, oat_liph, "LIPH")
-    
-    st.write(f"Elevation: {elevation_liph} ft, PA: {pa_liph} ft, ISA Dev: {isa_dev_liph}, DA: {da_liph} ft")
-    
-    st.header("Runway Conditions")
-    condition = st.selectbox("Runway Condition", ["Dry", "Wet"])
-    factor = 1.00 if condition == "Dry" else 1.15
-    
-    takeoff_roll = interpolate(pa_lipu, [0, 1000], [450, 480])  # Example interpolation
-    landing_roll = interpolate(pa_liph, [0, 1000], [500, 530])  # Example interpolation
-    
-    takeoff_distance = takeoff_roll * factor * 1.25
-    landing_distance = landing_roll * factor * 1.25
-    asdr = takeoff_distance + landing_distance
-    
-    st.write(f"Takeoff Ground Roll: {convert_feet_to_meters(takeoff_distance):.2f} m")
-    st.write(f"Landing Ground Roll: {convert_feet_to_meters(landing_distance):.2f} m")
-    st.write(f"Accelerate-Stop Distance Required (ASDR): {convert_feet_to_meters(asdr):.2f} m")
-    
-if __name__ == "__main__":
-    main()
+st.title("Cessna 152 Flight Performance Calculator")
+
+flight_time = st.number_input("Flight Time (minutes)", min_value=60, max_value=240, step=10)
+
+qnh_departure = st.number_input("QNH at Departure (hPa)", value=1013)
+oat_departure = st.number_input("OAT at Departure (°C)", value=15)
+elevation_departure = 44
+pa_departure = calculate_pressure_altitude(qnh_departure, elevation_departure)
+isa_dev_departure = calculate_isa_dev(oat_departure)
+
+takeoff_distance = calculate_takeoff_landing(oat_departure, pa_departure, takeoff_table) * 1.25
+landing_distance = calculate_takeoff_landing(oat_departure, pa_departure, landing_table) * 1.25
+asdr = takeoff_distance + landing_distance
+
+st.write(f"**Pressure Altitude:** {pa_departure} ft")
+st.write(f"**ISA Deviation:** {isa_dev_departure:.2f}°C")
+st.write(f"**Takeoff Distance (meters):** {takeoff_distance:.2f}")
+st.write(f"**Landing Distance (meters):** {landing_distance:.2f}")
+st.write(f"**ASDR (meters):** {asdr:.2f}")
